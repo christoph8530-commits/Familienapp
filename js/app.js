@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { store, uid } from './store.js';
 import { getEvents, clearCalendarCache } from './calendar.js';
 import { notifier, startReminderLoop } from './reminders.js';
+import { createSetupLink, hasSetupHash, takeSetupFromHash, isAllowedApiUrl, qrSvg } from './setup.js';
 import {
   $, $$, esc, safeUrl, icon, toast, field, openForm, openSheet, toDate,
   DAYS, weekdayIndex, startOfDay, startOfWeek, addDays, sameDay, isoWeek,
@@ -50,6 +51,16 @@ function parseIngredient(text) {
 const formatIngredient = i => [i.qty, i.name].filter(Boolean).join(' ');
 
 const initials = name => String(name || '?').split(/\s+/).filter(w => /^[A-Za-zÄÖÜäöü]/.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+
+/** Name der Person an diesem Gerät (Einstellungen). */
+const me = () => getSettings().deviceName;
+/** Name nur anzeigen, wenn es jemand anderes war – der eigene Name wäre Rauschen. */
+const byOther = name => (name && name !== me() ? name : '');
+
+/** Checklisten-Punkte ohne gelöschte (gelöschte bleiben als Markierung für die Zusammenführung). */
+const liveItems = cl => (cl?.items || []).filter(i => !i.deleted);
+/** Checklisten-Punkt ändern – mit eigenem Zeitstempel, damit pro Punkt zusammengeführt werden kann. */
+const touch = (item, patch = {}) => ({ ...item, ...patch, updatedAt: new Date().toISOString(), ...(me() && { updatedBy: me() }) });
 
 /** Abreißkalender-Badge: Monat oben, Tag groß darunter. */
 const dateBadge = value =>
@@ -159,8 +170,19 @@ function renderHome() {
       </div>
     </section>` : '';
 
+  const nameCard = connected && !me() ? `
+    <section class="card setup-card">
+      <div class="card-head">${icon('user')}<h2>Wer nutzt dieses Handy?</h2></div>
+      <p class="small">Mit deinem Namen sehen die anderen, wer etwas eingetragen oder abgehakt hat.</p>
+      <form class="quick-add" data-form="device-name">
+        <input name="name" placeholder="Dein Name" aria-label="Dein Name" required autocomplete="given-name">
+        <button class="btn btn-primary">Speichern</button>
+      </form>
+    </section>` : '';
+
   return `
     ${setupCard}
+    ${nameCard}
     <section class="hero">
       <p class="eyebrow">${greet}</p>
       <h2 class="display">${esc(fmtDayLong(now))}</h2>
@@ -284,7 +306,8 @@ function renderShoppingList() {
         ${i.checked ? 'checked' : ''} aria-label="${esc(i.name)} abhaken"></label>
       <div class="item-main clickable" data-action="shop-edit" data-id="${esc(i.id)}">
         <div class="item-title">${esc(i.name)}</div>
-        ${i.qty || i.source?.title ? `<div class="item-sub">${esc([i.qty, i.source?.title && `für ${i.source.title}`].filter(Boolean).join(' · '))}</div>` : ''}
+        ${(sub => (sub.length ? `<div class="item-sub">${esc(sub.join(' · '))}</div>` : ''))(
+          [i.qty, i.source?.title && `für ${i.source.title}`, byOther(i.createdBy) && `von ${i.createdBy}`].filter(Boolean))}
       </div>
     </li>`;
 
@@ -533,8 +556,9 @@ function renderInfo() {
     </section>`;
 
   const checklistCards = checklists.map(cl => {
-    const total = cl.items?.length || 0;
-    const done = cl.items?.filter(i => i.done).length || 0;
+    const items = liveItems(cl);
+    const total = items.length;
+    const done = items.filter(i => i.done).length;
     return `
       <details class="card checklist" id="checklist-${esc(cl.id)}" data-checklist="${esc(cl.id)}" ${state.openLists.has(cl.id) ? 'open' : ''}>
         <summary class="card-head">
@@ -543,10 +567,11 @@ function renderInfo() {
           ${icon('chev-right', 'icon-sm chev')}
         </summary>
         <div class="progress" role="progressbar" aria-valuenow="${done}" aria-valuemax="${total}"><i style="width:${total ? (done / total) * 100 : 0}%"></i></div>
-        <ul class="list">${(cl.items || []).map(it => `
+        <ul class="list">${items.map(it => `
           <li class="item compact ${it.done ? 'done' : ''}">
             <label class="check-row"><input type="checkbox" class="check" data-change="checklist-toggle" data-id="${esc(cl.id)}" data-item="${esc(it.id)}" ${it.done ? 'checked' : ''}>
-              <span class="item-title">${esc(it.text)}</span></label>
+              <span class="item-title">${esc(it.text)}</span>
+              ${it.done && byOther(it.doneBy) ? `<span class="item-by">${esc(it.doneBy)}</span>` : ''}</label>
           </li>`).join('')}</ul>
         <form class="quick-add" data-form="checklist-item-add" data-id="${esc(cl.id)}">
           <input name="text" placeholder="Punkt hinzufügen …" aria-label="Punkt hinzufügen" required autocomplete="off">
@@ -610,7 +635,8 @@ function renderTrips() {
   const card = t => {
     const nights = Math.max(0, Math.round((startOfDay(t.end || t.start) - startOfDay(t.start)) / 864e5));
     const cl = t.checklistId && store.get('checklists', t.checklistId);
-    const clDone = cl ? cl.items.filter(i => i.done).length : 0;
+    const clItems = liveItems(cl);
+    const clDone = clItems.filter(i => i.done).length;
     return `
       <article class="card trip">
         <div class="trip-hero theme-${esc(t.theme || 'beach')}">
@@ -628,7 +654,7 @@ function renderTrips() {
               <span class="ico">${icon(meta.icon)}</span><span><b>${esc(l.label)}</b><small>${meta.sub}</small></span></a>`;
           }).join('')}</div>` : ''}
           ${t.details?.length ? `<dl class="kv">${t.details.map(d => `<dt>${esc(d.label)}</dt><dd>${esc(d.value)}</dd>`).join('')}</dl>` : ''}
-          ${cl ? `<button class="btn btn-soft btn-block" data-action="open-checklist" data-id="${esc(cl.id)}">${icon('checklist', 'icon-sm')} ${esc(cl.title)} · ${clDone}/${cl.items.length}</button>` : ''}
+          ${cl ? `<button class="btn btn-soft btn-block" data-action="open-checklist" data-id="${esc(cl.id)}">${icon('checklist', 'icon-sm')} ${esc(cl.title)} · ${clDone}/${clItems.length}</button>` : ''}
           ${t.notes ? `<p class="small muted">${esc(t.notes)}</p>` : ''}
         </div>
       </article>`;
@@ -693,7 +719,7 @@ function editTopic(id) {
     fields: [
       { name: 'title', label: 'Titel', value: t.title, required: true, autofocus: !id, placeholder: 'Worüber wollen wir sprechen?' },
       { name: 'description', label: 'Beschreibung', type: 'textarea', rows: 4, value: t.description },
-      { name: 'owner', label: 'Wer bringt es ein?', value: t.owner, half: true, placeholder: 'z. B. Mama' },
+      { name: 'owner', label: 'Wer bringt es ein?', value: id ? t.owner : me(), half: true, placeholder: 'z. B. Mama' },
       { name: 'dueDate', label: 'Bis wann?', type: 'date', value: t.dueDate, half: true },
     ],
     onSubmit: v => {
@@ -765,13 +791,16 @@ function editChecklist(id) {
     title: id ? 'Checkliste bearbeiten' : 'Neue Checkliste',
     fields: [
       { name: 'title', label: 'Titel', value: cl.title, required: true, placeholder: 'z. B. Packliste Skiferien' },
-      { name: 'items', label: 'Punkte (einer pro Zeile)', type: 'textarea', rows: 8, value: cl.items.map(i => i.text).join('\n') },
+      { name: 'items', label: 'Punkte (einer pro Zeile)', type: 'textarea', rows: 8, value: liveItems(cl).map(i => i.text).join('\n') },
     ],
     onSubmit: v => {
-      const prev = new Map(cl.items.map(i => [norm(i.text), i]));
-      const items = v.items.split('\n').map(l => l.trim()).filter(Boolean)
-        .map(text => prev.get(norm(text)) || { id: uid(), text, done: false });
-      const saved = store.save('checklists', { id, title: v.title, items });
+      const prev = new Map(liveItems(cl).map(i => [norm(i.text), i]));
+      const kept = v.items.split('\n').map(l => l.trim()).filter(Boolean)
+        .map(text => prev.get(norm(text)) || touch({ id: uid(), text, done: false }));
+      const keptIds = new Set(kept.map(i => i.id));
+      // Entfernte Punkte nicht einfach weglassen – sonst holt die Zusammenführung sie vom anderen Gerät zurück
+      const removed = (cl.items || []).filter(i => !keptIds.has(i.id)).map(i => (i.deleted ? i : touch(i, { deleted: true })));
+      const saved = store.save('checklists', { id, title: v.title, items: [...kept, ...removed] });
       state.openLists.add(saved.id);
     },
     onDelete: id ? () => store.remove('checklists', id) : null,
@@ -823,11 +852,15 @@ function openSettings() {
   openSheet({
     title: 'Einstellungen',
     body: `
+      <h3 class="sheet-section">Dieses Gerät</h3>
+      ${field({ name: 'deviceName', label: 'Dein Name', value: s.deviceName, placeholder: 'z. B. Christoph', hint: 'Wird bei Einträgen angezeigt („von …“). Gilt nur für dieses Gerät.' })}
+
       <h3 class="sheet-section">Google Sheets (Apps Script)</h3>
       ${field({ name: 'apiUrl', label: 'Web-App-URL', type: 'url', value: s.apiUrl, placeholder: 'https://script.google.com/macros/s/…/exec', hint: 'Leer = Demo-/Offline-Modus, Daten nur auf diesem Gerät. Script mit einem privaten Familienkonto bereitstellen.' })}
       ${field({ name: 'apiToken', label: 'Zugangs-Token (API_TOKEN)', value: s.apiToken, hint: 'Steht nach setup() im Ausführungsprotokoll, oder im Apps Script unter Projekteinstellungen → Script-Properties → API_TOKEN.' })}
       <div class="row wrap"><button type="button" class="btn btn-soft btn-sm" data-action="settings-test">Verbindung testen</button>
         <span class="small muted" id="settingsStatus">${store.lastSync ? `Letzter Sync: ${esc(relativeDay(store.lastSync))}` : 'Noch nie synchronisiert'}</span></div>
+      ${api.isConfigured() ? `<button type="button" class="btn btn-primary btn-block" data-action="setup-link">${icon('link', 'icon-sm')} Weiteres Gerät verbinden (QR-Code)</button>` : ''}
 
       <h3 class="sheet-section">Kalender</h3>
       ${field({ name: 'icalUrl', label: 'iCal-URL (Sonderfall – meist leer lassen)', type: 'url', value: s.icalUrl, placeholder: 'leer lassen', hint: 'Google-Kalender NICHT hier eintragen – die kommen über das Apps Script (Script-Property CALENDAR_ID). Nur für fremde iCal-Feeds mit CORS-Freigabe.' })}
@@ -848,21 +881,88 @@ function openSettings() {
       <button type="button" class="btn btn-ghost" data-close>Abbrechen</button>
       <button type="submit" class="btn btn-primary">Speichern</button>`,
     onMount(form, dlg) {
+      form.apiUrl.addEventListener('input', () => form.apiUrl.setCustomValidity(''));
       form.addEventListener('submit', e => {
         e.preventDefault();
-        if (!form.reportValidity()) return;
-        saveSettings({ apiUrl: form.apiUrl.value.trim(), apiToken: form.apiToken.value.trim(), icalUrl: form.icalUrl.value.trim() });
-        // Beim Verbinden fliegen die Beispieldaten raus – im Sheet stehen nur echte Daten.
-        const removed = api.isConfigured() && store.hasDemo ? store.clearDemo(true) : 0;
-        clearCalendarCache();
+        if (!validApiUrlField(form.apiUrl) || !form.reportValidity()) return;
         dlg.close();
-        store.setStatus(api.isConfigured() ? 'idle' : 'local');
-        store.sync();
-        ensureCalendar(true);
-        toast(removed ? 'Verbunden – Demo-Daten entfernt' : 'Einstellungen gespeichert');
+        applyConnection({
+          deviceName: form.deviceName.value.trim(),
+          apiUrl: form.apiUrl.value.trim(), apiToken: form.apiToken.value.trim(), icalUrl: form.icalUrl.value.trim(),
+        }, 'Einstellungen gespeichert');
       });
     },
   });
+}
+
+/** Prüft das URL-Feld: nur echte Apps-Script-Adressen (oder leer = Demo-Modus). */
+function validApiUrlField(input) {
+  const v = input.value.trim();
+  input.setCustomValidity(v && !isAllowedApiUrl(v) ? 'Die Adresse muss mit https://script.google.com/ beginnen.' : '');
+  return input.reportValidity();
+}
+
+/** Einstellungen übernehmen und (neu) synchronisieren. Beim Verbinden fliegen Demo-Daten raus. */
+function applyConnection(patch, message) {
+  saveSettings(patch);
+  // Nur lokal löschen – die Demo-Daten waren nie im Sheet und sollen dort auch keine Spuren hinterlassen.
+  const removed = api.isConfigured() && store.hasDemo ? store.clearDemo(true) : 0;
+  clearCalendarCache();
+  store.setStatus(api.isConfigured() ? 'idle' : 'local');
+  store.sync();
+  ensureCalendar(true);
+  render();
+  toast(removed ? `${message} – Demo-Daten entfernt` : message);
+}
+
+/** Zeigt QR-Code und Link, mit denen sich ein weiteres Handy verbinden lässt. */
+async function openSetupLink() {
+  const link = createSetupLink();
+  const dlg = openSheet({
+    title: 'Weiteres Gerät verbinden',
+    body: `
+      <p class="small">Mit dem anderen Handy diesen QR-Code scannen (Kamera-App) oder den Link schicken. Dort öffnet sich die App und fragt, ob sie sich verbinden soll. Danach die App installieren.</p>
+      <div class="qr-box" id="qrBox"><p class="small muted">QR-Code wird erstellt …</p></div>
+      <div class="banner warn small">Der Link enthält euren Zugangs-Token. Nur an Familienmitglieder geben – nicht in Gruppen oder öffentlich teilen.</div>
+      <div class="row wrap">
+        <button type="button" class="btn btn-soft btn-sm" data-action="setup-copy">Link kopieren</button>
+        ${navigator.share ? '<button type="button" class="btn btn-soft btn-sm" data-action="setup-share">Teilen …</button>' : ''}
+      </div>`,
+    footer: '<span class="spacer"></span><button type="button" class="btn btn-primary" data-close>Fertig</button>',
+  });
+  dlg.dataset.link = link;
+  try {
+    $('#qrBox').innerHTML = await qrSvg(link);
+  } catch {
+    $('#qrBox').innerHTML = '<p class="small muted">QR-Code konnte nicht erstellt werden – bitte den Link nutzen.</p>';
+  }
+}
+
+/** Wird beim Öffnen eines Einrichtungs-Links gezeigt. */
+function openSetupConfirm(data) {
+  openSheet({
+    title: 'Gerät verbinden',
+    body: `
+      <p class="small">Dieses Gerät mit eurem Familien-Sheet verbinden? Danach seht ihr hier dieselbe Einkaufsliste, dieselben Termine und Themen wie auf den anderen Handys.</p>
+      ${field({ name: 'deviceName', label: 'Dein Name', value: me(), required: true, autofocus: true, placeholder: 'z. B. Anna', hint: 'Damit die anderen sehen, wer etwas eingetragen hat.' })}`,
+    footer: `<span class="spacer"></span>
+      <button type="button" class="btn btn-ghost" data-close>Abbrechen</button>
+      <button type="submit" class="btn btn-primary">Verbinden</button>`,
+    onMount(form, dlg) {
+      form.addEventListener('submit', e => {
+        e.preventDefault();
+        if (!form.reportValidity()) return;
+        dlg.close();
+        applyConnection({ ...data, deviceName: form.deviceName.value.trim() }, 'Gerät verbunden');
+      });
+    },
+  });
+}
+
+function handleSetupLink() {
+  const setup = takeSetupFromHash();
+  if (setup?.error) toast(setup.error, { timeout: 6000 });
+  else if (setup) openSetupConfirm(setup);
 }
 
 /* =========================================================================
@@ -915,7 +1015,7 @@ const actions = {
   'checklist-edit': el => editChecklist(el.dataset.id),
   'checklist-reset': el => {
     const cl = store.get('checklists', el.dataset.id);
-    store.save('checklists', { id: cl.id, items: cl.items.map(i => ({ ...i, done: false })) });
+    store.save('checklists', { id: cl.id, items: cl.items.map(i => (i.deleted || !i.done ? i : touch(i, { done: false, doneBy: null }))) });
     toast(`„${cl.title}“ zurückgesetzt – bereit für die nächste Runde`);
   },
   'open-checklist': el => {
@@ -929,9 +1029,18 @@ const actions = {
   'trip-edit': (el, e) => { e.preventDefault(); editTrip(el.dataset.id); },
 
   settings: () => openSettings(),
+  'setup-link': () => openSetupLink(),
+  'setup-copy': async el => {
+    const link = $('#formDialog').dataset.link;
+    try { await navigator.clipboard.writeText(link); el.textContent = 'Kopiert ✓'; } catch { prompt('Link kopieren:', link); }
+  },
+  'setup-share': async () => {
+    try { await navigator.share({ title: 'Familienzentrale verbinden', url: $('#formDialog').dataset.link }); } catch { /* abgebrochen */ }
+  },
   'settings-test': async () => {
     const form = $('#formDialog form');
     const out = $('#settingsStatus');
+    if (!validApiUrlField(form.apiUrl)) return;
     saveSettings({ apiUrl: form.apiUrl.value.trim(), apiToken: form.apiToken.value.trim() });
     out.textContent = 'Teste …';
     try {
@@ -992,11 +1101,18 @@ const changeActions = {
   'checklist-toggle': el => {
     const cl = store.get('checklists', el.dataset.id);
     state.openLists.add(cl.id);
-    store.save('checklists', { id: cl.id, items: cl.items.map(i => (i.id === el.dataset.item ? { ...i, done: el.checked } : i)) });
+    store.save('checklists', { id: cl.id, items: cl.items.map(i => (i.id === el.dataset.item ? touch(i, { done: el.checked, doneBy: el.checked ? me() || null : null }) : i)) });
   },
 };
 
 const formActions = {
+  'device-name': form => {
+    const name = form.name.value.trim();
+    if (!name) return;
+    saveSettings({ deviceName: name });
+    render();
+    toast(`Hallo ${name}!`);
+  },
   'shop-add': form => {
     const text = form.text.value.trim();
     if (!text) return;
@@ -1010,7 +1126,7 @@ const formActions = {
     const cl = store.get('checklists', form.dataset.id);
     if (!text || !cl) return;
     state.openLists.add(cl.id);
-    store.save('checklists', { id: cl.id, items: [...cl.items, { id: uid(), text, done: false }] });
+    store.save('checklists', { id: cl.id, items: [...cl.items, touch({ id: uid(), text, done: false })] });
     state.focus = `[data-form="checklist-item-add"][data-id="${cl.id}"] input`;
     render();
   },
@@ -1087,12 +1203,15 @@ function registerServiceWorker() {
 store.init();
 store.addEventListener('change', () => refresh());
 store.addEventListener('status', renderSync);
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => { if (hasSetupHash()) handleSetupLink(); route(); });
 window.addEventListener('online', () => store.sync());
 window.addEventListener('offline', () => store.setStatus(api.isConfigured() ? 'offline' : 'local'));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) store.sync(); });
 
+const initialSetup = takeSetupFromHash(); // Einrichtungs-Link vor dem Routing aus der Adresse nehmen
 route();
+if (initialSetup?.error) toast(initialSetup.error, { timeout: 6000 });
+else if (initialSetup) openSetupConfirm(initialSetup);
 renderSync();
 startReminderLoop(r => toast(`Erinnerung: ${r.title}`, { timeout: 8000 }));
 setInterval(tickCountdowns, 1000);

@@ -32,8 +32,10 @@ Familienapp/
 │   ├── store.js          Offline-first Speicher + Outbox-Sync (Last-Write-Wins)
 │   ├── calendar.js       Kalenderquellen + iCal-Parser (RRULE, EXDATE, ganztägig)
 │   ├── reminders.js      Erinnerungs-Loop + Notifications
+│   ├── setup.js          Einrichtungs-Link + QR-Code für weitere Geräte
 │   ├── ui.js             DOM-/Datums-Helfer, Toasts, Bottom-Sheet-Formulare
-│   └── mock-data.js      Demo-Daten (u. a. „Gran Canaria Urlaub“)
+│   ├── mock-data.js      Demo-Daten (nur auf Wunsch)
+│   └── vendor/qrcode.js  QR-Code-Generator (Kazuhiko Arase, MIT-Lizenz, unverändert)
 ├── icons/                App-Icons (any, maskable, Badge, SVG)
 └── backend/
     ├── Code.gs           Google Apps Script (REST-API für Google Sheets + Kalender)
@@ -117,6 +119,21 @@ Jede Anfrage enthält `token`. Collections: `shopping`, `meals`, `topics`, `cont
 // reminders (nur lokal auf dem Gerät)
 { id, title, note, at, repeat: 'none'|'daily'|'weekly'|'monthly', done }
 ```
+
+## Weitere Geräte verbinden
+
+Auf einem bereits verbundenen Gerät: *Einstellungen → Weiteres Gerät verbinden (QR-Code)*. Das andere Handy scannt den QR-Code mit der Kamera-App (oder öffnet den geteilten Link), bestätigt mit „Verbinden“ und gibt seinen Namen ein. Danach die App installieren.
+
+- Der Link hat die Form `…/Familienapp/#setup=…`. Die Daten stehen im Hash und werden nie an einen Server geschickt. Nach dem Öffnen entfernt die App sie sofort aus der Adresszeile.
+- Der Link enthält den Zugangs-Token, also nur innerhalb der Familie weitergeben.
+- Die App akzeptiert nur Backend-Adressen unter `https://script.google.com/`. Ein manipulierter Link kann die Daten also nicht an einen fremden Server umleiten.
+- Der QR-Code wird lokal auf dem Gerät erzeugt, ohne Online-Dienst.
+
+## Gemeinsam bearbeiten
+
+- **Name pro Gerät** (*Einstellungen → Dein Name*): Einträge speichern `createdBy`/`updatedBy`. Die App zeigt „von …“ bzw. bei Checklisten, wer abgehakt hat, aber nur bei Einträgen anderer Personen.
+- **Checklisten** werden Punkt für Punkt zusammengeführt (`MERGE_FIELDS` in `js/store.js` und `backend/Code.gs`). Hakt ihr gleichzeitig verschiedene Punkte ab, bleiben beide Haken erhalten. Gelöschte Punkte bleiben als Markierung (`deleted: true`) in der Liste, damit sie nicht von einem anderen Gerät zurückkommen.
+- Alle anderen Einträge (Einkaufsartikel, Themen, Mahlzeiten …) gelten als Ganzes: Die jüngere Änderung gewinnt. Einkaufsartikel sind einzelne Einträge, dort gibt es deshalb keine Konflikte.
 
 ## Kalender einbinden
 

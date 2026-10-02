@@ -370,6 +370,9 @@ details.checklist[open] .chev { transform: rotate(90deg); }
 details.checklist:not([open]) > summary { margin-bottom: 0; }
 details.checklist > .list { margin: 8px 0 10px; }
 .checklist-actions { margin: 8px -6px -6px; }
+.item-by { margin-left: auto; padding-left: 8px; font-size: .76rem; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.qr-box { display: grid; place-items: center; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; }
+.qr-box svg { width: min(260px, 100%); height: auto; display: block; }
 .progress { height: 5px; border-radius: 3px; background: var(--track); overflow: hidden; }
 .progress > i { display: block; height: 100%; background: var(--orange); transition: width .3s; }
 

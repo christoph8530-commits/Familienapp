@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { getSettings } from './config.js';
 import { createMockData } from './mock-data.js';
 
 /**
@@ -10,7 +11,13 @@ import { createMockData } from './mock-data.js';
  *   aktuellen Stand → Last-Write-Wins über das Feld updatedAt.
  * - Löschen = Soft-Delete (deleted: true), damit andere Geräte es mitbekommen.
  *
- * Gemeinsames Format jedes Eintrags: { id, createdAt, updatedAt, deleted?, ...fachliche Felder }
+ * - Ausnahme: Listen-Felder aus MERGE_FIELDS (z. B. Checklisten-Punkte) werden
+ *   Punkt für Punkt zusammengeführt. So gehen keine Haken verloren, wenn zwei
+ *   Handys gleichzeitig in derselben Checkliste abhaken. Dieselbe Logik steckt
+ *   in backend/Code.gs (mergeRecord_).
+ *
+ * Gemeinsames Format jedes Eintrags:
+ * { id, createdAt, createdBy?, updatedAt, updatedBy?, deleted?, ...fachliche Felder }
  */
 export const SYNCED = ['shopping', 'meals', 'topics', 'contacts', 'sizes', 'checklists', 'trips'];
 export const LOCAL_ONLY = ['reminders']; // Erinnerungen sind gerätebezogen (lokale Notifications)
@@ -23,6 +30,31 @@ const read = (key, fallback) => {
 const write = (key, value) => localStorage.setItem(P + key, JSON.stringify(value));
 
 const isDemoId = id => String(id).startsWith('demo-');
+
+/** Listen-Felder, deren Einträge einzeln (per id + updatedAt) zusammengeführt werden. */
+export const MERGE_FIELDS = { checklists: 'items' };
+
+const ts = x => String(x?.updatedAt || '');
+
+/** Führt zwei Fassungen einer Liste zusammen; pro Punkt gewinnt die jüngere Änderung. */
+export function mergeItems(older = [], newer = []) {
+  const byId = new Map(older.map(i => [i.id, i]));
+  const out = newer.map(n => {
+    const o = byId.get(n.id);
+    byId.delete(n.id);
+    return o && ts(o) > ts(n) ? o : n;
+  });
+  byId.forEach(o => out.push(o)); // nur auf dem anderen Gerät vorhanden → behalten
+  return out;
+}
+
+/** Führt zwei Fassungen eines Eintrags zusammen (b gewinnt bei Gleichstand). */
+export function mergeRecord(c, a, b) {
+  const [older, newer] = ts(a) > ts(b) ? [b, a] : [a, b];
+  const field = MERGE_FIELDS[c];
+  if (!field || !(Array.isArray(a[field]) || Array.isArray(b[field]))) return newer;
+  return { ...newer, [field]: mergeItems(older[field] || [], newer[field] || []) };
+}
 
 export const uid = () =>
   crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -111,8 +143,9 @@ class Store extends EventTarget {
     const list = (this.data[c] ||= []);
     const id = item.id || uid();
     const idx = list.findIndex(i => i.id === id);
-    const prev = idx >= 0 ? list[idx] : { createdAt: now };
-    const next = { ...prev, ...item, id, updatedAt: now };
+    const by = getSettings().deviceName;
+    const prev = idx >= 0 ? list[idx] : { createdAt: now, ...(by && { createdBy: by }) };
+    const next = { ...prev, ...item, id, updatedAt: now, ...(by && { updatedBy: by }) };
     if (idx >= 0) list[idx] = next; else list.push(next);
     return next;
   }
@@ -198,7 +231,8 @@ class Store extends EventTarget {
         const remote = res.data?.[c];
         if (!Array.isArray(remote)) continue;
         const pending = new Map(this.outbox.filter(o => o.collection === c).map(o => [o.item.id, o.item]));
-        const merged = remote.map(i => pending.get(i.id) || i);
+        // Während des Requests lokal Geändertes zusammenführen statt blind zu überschreiben
+        const merged = remote.map(i => (pending.has(i.id) ? mergeRecord(c, i, pending.get(i.id)) : i));
         pending.forEach((item, id) => { if (!merged.some(i => i.id === id)) merged.push(item); });
         this.data[c] = merged;
         this.persist(c);

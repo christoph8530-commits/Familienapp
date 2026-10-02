@@ -29,6 +29,10 @@ const COLLECTIONS = ['shopping', 'meals', 'topics', 'contacts', 'sizes', 'checkl
 const HEADER = ['id', 'updatedAt', 'deleted', 'json'];
 const TOMBSTONE_DAYS = 30;
 
+// Listen-Felder, deren Einträge einzeln (per id + updatedAt) zusammengeführt werden.
+// Muss zu MERGE_FIELDS in js/store.js passen.
+const MERGE_FIELDS = { checklists: 'items' };
+
 /* ---------- Einstiegspunkte ---------- */
 
 function doGet(e) {
@@ -137,20 +141,48 @@ function upsertMany_(name, items) {
   const index = {};
   rows.forEach(function (r, i) { index[r[0]] = i; });
 
+  const field = MERGE_FIELDS[name];
   items.forEach(function (item) {
     if (!item || !item.id) return;
-    const updatedAt = String(item.updatedAt || new Date().toISOString());
-    const row = [String(item.id), updatedAt, item.deleted === true, JSON.stringify(item)];
     const i = index[item.id];
     if (i === undefined) {
       index[item.id] = rows.length;
-      rows.push(row);
-    } else if (String(rows[i][1]) <= updatedAt) { // Last-Write-Wins
-      rows[i] = row;
+      rows.push(rowOf_(item));
+      return;
     }
+    if (field) {
+      // Listen-Feld Punkt für Punkt zusammenführen (z. B. Checklisten-Haken von zwei Handys)
+      let existing = null;
+      try { existing = JSON.parse(rows[i][3]); } catch (err) { existing = null; }
+      if (existing) { rows[i] = rowOf_(mergeRecord_(field, existing, item)); return; }
+    }
+    if (String(rows[i][1]) <= String(item.updatedAt || '')) rows[i] = rowOf_(item); // Last-Write-Wins
   });
 
   if (rows.length) sh.getRange(2, 1, rows.length, HEADER.length).setValues(rows);
+}
+
+function rowOf_(item) {
+  return [String(item.id), String(item.updatedAt || new Date().toISOString()), item.deleted === true, JSON.stringify(item)];
+}
+
+function ts_(x) { return String((x && x.updatedAt) || ''); }
+
+/** Zwei Fassungen eines Eintrags zusammenführen: Felder vom jüngeren, Listen-Punkte einzeln. */
+function mergeRecord_(field, a, b) {
+  const older = ts_(a) > ts_(b) ? b : a;
+  const newer = older === a ? b : a;
+  const merged = JSON.parse(JSON.stringify(newer));
+  if (!Array.isArray(a[field]) && !Array.isArray(b[field])) return merged;
+  const byId = {};
+  (older[field] || []).forEach(function (o) { byId[o.id] = o; });
+  merged[field] = (newer[field] || []).map(function (n) {
+    const o = byId[n.id];
+    delete byId[n.id];
+    return o && ts_(o) > ts_(n) ? o : n;
+  });
+  Object.keys(byId).forEach(function (id) { merged[field].push(byId[id]); });
+  return merged;
 }
 
 /* ---------- Kalender ---------- */

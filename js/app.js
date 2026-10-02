@@ -466,7 +466,13 @@ function renderTopics() {
       <button data-action="topic-filter" data-filter="done" aria-pressed="${f === 'done'}">Besprochen (${all.length - openCount})</button>
       <button data-action="topic-filter" data-filter="all" aria-pressed="${f === 'all'}">Alle</button>
     </div>
-    ${list.length ? list.map(card).join('') : '<section class="card empty-state">Keine Themen in dieser Ansicht.</section>'}
+    <button class="btn btn-soft btn-block" data-action="topic-add">${icon('plus', 'icon-sm')} Neues Thema eintragen</button>
+    ${list.length ? list.map(card).join('') : all.length
+      ? '<section class="card empty-state">Keine Themen in dieser Ansicht.</section>'
+      : `<section class="card empty-state">
+          <p><b>Noch keine Besprechungspunkte.</b></p>
+          <p class="small">Sammelt hier, worüber ihr reden wollt – Urlaubsbudget, Anmeldungen, Geschenke. Abhaken, sobald es besprochen ist. Alle Einträge erscheinen auf jedem verbundenen Handy.</p>
+        </section>`}
     <div class="fab-space"></div>
     <button class="fab" data-action="topic-add" aria-label="Neues Thema">${icon('plus')}</button>`;
 }

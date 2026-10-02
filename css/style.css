@@ -332,6 +332,15 @@ dialog[open] .sheet { animation: sheet-in .2s ease-out; }
 .day-head .dname { font-weight: 600; color: var(--muted); }
 .day-block.today { border-color: var(--blue); box-shadow: inset 4px 0 0 var(--blue); }
 .day-block.today .num { color: var(--blue); }
+.past-toggle {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 14px;
+  font: inherit; font-weight: 600; color: var(--muted); text-align: left; cursor: pointer; background: var(--surface-2);
+}
+.past-toggle .item-main { display: grid; }
+.past-toggle .item-title { color: var(--ink); }
+.past-toggle > .small { color: var(--blue); font-weight: 700; }
+.past-toggle .chev { transition: transform .2s; }
+.past-toggle.open .chev { transform: rotate(90deg); }
 .event { display: flex; gap: 12px; margin-top: 8px; padding: 9px 12px; border-radius: 6px; background: var(--blue-tint); border-left: 4px solid var(--cal, var(--blue)); }
 .event.allday { background: var(--orange-tint); border-left-color: var(--cal, var(--orange)); }
 .event-cal { font-size: .76rem; font-weight: 600; }

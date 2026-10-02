@@ -82,6 +82,7 @@ const state = {
   calDate: startOfDay(new Date()),
   cal: { events: [], source: null, loading: true },
   openLists: new Set(),
+  calShowPast: false,
   focus: null,
   dirty: false,
 };
@@ -281,11 +282,21 @@ function renderMealPlan() {
         <div class="item-sub">${meals.length} Mahlzeiten · ${ingCount} Zutaten</div></div>
       <button class="btn btn-accent" data-action="week-to-list" ${ingCount ? '' : 'disabled'}>${icon('cart', 'icon-sm')} Auf die Liste</button>
     </section>
-    ${DAYS.map((name, i) => {
+    ${Array.from({ length: 7 }, (_, k) => {
+      // Ab heute sortiert; Tage, die diese Woche schon vorbei sind, rücken als „nächste Woche“ ans Ende
+      const i = (today + k) % 7;
+      const name = DAYS[i];
+      const date = addDays(startOfDay(new Date()), k);
       const dayMeals = meals.filter(m => m.day === i).sort(bySlot);
-      return `
-        <section class="card day-card ${i === today ? 'today' : ''}">
-          <div class="card-head"><h3>${name}</h3>${i === today ? '<span class="chip chip-primary">Heute</span>' : ''}
+      const passedMeals = meals.filter(m => m.day < today).length;
+      const nextWeekTitle = today > 0 && k === 7 - today ? `
+        <h2 class="section-title">Nächste Woche
+          ${passedMeals ? `<button class="btn btn-ghost btn-sm" data-action="meals-clear-passed" title="Mahlzeiten der vergangenen Tage entfernen">${icon('trash', 'icon-sm')} Leeren</button>` : ''}</h2>` : '';
+      const chip = k === 0 ? 'Heute' : k === 1 ? 'Morgen' : '';
+      return `${nextWeekTitle}
+        <section class="card day-card ${k === 0 ? 'today' : ''}">
+          <div class="card-head"><h3>${name}</h3><span class="small muted">${esc(fmt(date, { day: 'numeric', month: 'short' }))}</span>
+            ${chip ? `<span class="chip chip-primary">${chip}</span>` : ''}
             <span class="spacer"></span>
             <button class="icon-btn" data-action="meal-add" data-day="${i}" aria-label="Mahlzeit für ${name} hinzufügen">${icon('plus')}</button></div>
           ${dayMeals.length ? dayMeals.map(mealRow).join('') : '<p class="empty small left">Noch nichts geplant</p>'}
@@ -395,6 +406,31 @@ function eventRow(e) {
     </div>`;
 }
 
+/**
+ * Tage der Wochenansicht. Ist es die aktuelle Woche, werden vergangene Tage
+ * zu einer Zeile zusammengeklappt – so steht heute direkt oben.
+ */
+function dayList(dates, dayBlock) {
+  const todayStart = startOfDay(new Date());
+  const past = dates.filter(d => d < todayStart);
+  if (!past.length || !dates.some(d => sameDay(d, todayStart))) return dates.map(dayBlock).join('');
+
+  const count = past.reduce((n, d) => n + eventsBetween(d, addDays(d, 1)).length, 0);
+  const range = past.length === 1
+    ? fmt(past[0], { weekday: 'short', day: 'numeric' })
+    : `${fmt(past[0], { weekday: 'short', day: 'numeric' })} – ${fmt(past[past.length - 1], { weekday: 'short', day: 'numeric' })}`;
+  const open = state.calShowPast;
+  const toggle = `
+    <button class="card past-toggle ${open ? 'open' : ''}" data-action="cal-toggle-past" aria-expanded="${open}">
+      ${icon('chev-right', 'icon-sm chev')}
+      <span class="item-main"><span class="item-title">Vergangene Tage</span>
+        <span class="item-sub">${esc(range)} · ${count} ${count === 1 ? 'Termin' : 'Termine'}</span></span>
+      <span class="small">${open ? 'ausblenden' : 'anzeigen'}</span>
+    </button>`;
+  const rest = dates.filter(d => d >= todayStart);
+  return toggle + (open ? past.map(dayBlock).join('') : '') + rest.map(dayBlock).join('');
+}
+
 function renderCalendar() {
   const mode = prefs.calMode;
   const d = state.calDate;
@@ -440,7 +476,7 @@ function renderCalendar() {
     </div>
     ${state.cal.error ? `<div class="banner warn small">${esc(state.cal.error)}</div>` : ''}
     ${notConnected}
-    ${Array.from({ length: days }, (_, i) => dayBlock(addDays(from, i))).join('')}
+    ${dayList(Array.from({ length: days }, (_, i) => addDays(from, i)), dayBlock)}
     <p class="small muted center">Termine werden in Google Kalender gepflegt – hier nur Lesezugriff.</p>`;
 }
 
@@ -987,7 +1023,17 @@ const actions = {
   'cal-mode': el => { prefs.calMode = el.dataset.mode; savePrefs(); render(); },
   'cal-prev': () => { state.calDate = addDays(state.calDate, prefs.calMode === 'week' ? -7 : -1); render(); ensureCalendar(); },
   'cal-next': () => { state.calDate = addDays(state.calDate, prefs.calMode === 'week' ? 7 : 1); render(); ensureCalendar(); },
-  'cal-today': () => { state.calDate = startOfDay(new Date()); render(); ensureCalendar(); },
+  'cal-today': () => { state.calDate = startOfDay(new Date()); state.calShowPast = false; render(); ensureCalendar(); },
+  'cal-toggle-past': () => { state.calShowPast = !state.calShowPast; render(); },
+  'meals-clear-passed': () => {
+    const today = weekdayIndex(new Date());
+    const passed = store.all('meals').filter(m => m.day < today);
+    if (!passed.length) return;
+    const removed = store.removeMany('meals', passed.map(m => m.id));
+    toast(`${removed.length} ${removed.length === 1 ? 'Mahlzeit' : 'Mahlzeiten'} entfernt – Platz für die neue Woche`, {
+      action: 'Rückgängig', onAction: () => store.restore('meals', removed), timeout: 6000,
+    });
+  },
   'cal-day': el => { state.calDate = startOfDay(el.dataset.date); prefs.calMode = 'day'; savePrefs(); render(); window.scrollTo(0, 0); },
   'cal-refresh': async () => { toast('Kalender wird aktualisiert …', { timeout: 1500 }); await ensureCalendar(true); },
 

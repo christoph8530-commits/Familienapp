@@ -17,7 +17,7 @@
  *
  * Script-Properties (Projekteinstellungen → Script-Properties):
  *  - API_TOKEN    Gemeinsames Familien-Token (wird von setup() erzeugt)
- *  - CALENDAR_ID  Optional: ID des Familienkalenders (z. B. xyz@group.calendar.google.com)
+ *  - CALENDAR_ID  Optional: Kalender-ID(s), kommagetrennt (z. B. xyz@group.calendar.google.com, ich@gmail.com)
  *  - ICAL_URL     Optional: iCal-Adresse, falls kein CALENDAR_ID-Zugriff möglich
  *
  * Datenmodell: Ein Tabellenblatt pro Collection, Spalten
@@ -160,24 +160,35 @@ function calendar_(from, to) {
   const start = from ? new Date(from) : new Date();
   const end = to ? new Date(to) : new Date(start.getTime() + 30 * 864e5);
 
-  const calendarId = props.getProperty('CALENDAR_ID');
-  if (calendarId) {
-    const cal = CalendarApp.getCalendarById(calendarId);
-    if (!cal) throw new Error('Kalender nicht gefunden – ist er für das Script-Konto freigegeben?');
-    return {
-      source: 'calendar',
-      events: cal.getEvents(start, end).map(function (ev) {
-        return {
-          id: ev.getId() + '_' + ev.getStartTime().getTime(),
+  // Eine oder mehrere Kalender-IDs, kommagetrennt: "familie@group.calendar.google.com, ich@gmail.com"
+  const calendarIds = String(props.getProperty('CALENDAR_ID') || '')
+    .split(',').map(function (s) { return s.trim(); }).filter(String);
+  if (calendarIds.length) {
+    const seen = {};
+    const events = [];
+    calendarIds.forEach(function (calendarId) {
+      const cal = CalendarApp.getCalendarById(calendarId);
+      if (!cal) throw new Error('Kalender „' + calendarId + '“ nicht gefunden – ist er für dieses Konto sichtbar?');
+      const name = cal.getName();
+      const color = cal.getColor();
+      cal.getEvents(start, end).forEach(function (ev) {
+        const id = ev.getId() + '_' + ev.getStartTime().getTime();
+        if (seen[id]) return; // gleicher Termin in mehreren Kalendern
+        seen[id] = true;
+        events.push({
+          id: id,
           title: ev.getTitle(),
           start: ev.getStartTime().toISOString(),
           end: ev.getEndTime().toISOString(),
           allDay: ev.isAllDayEvent(),
           location: ev.getLocation(),
           description: ev.getDescription(),
-        };
-      }),
-    };
+          calendar: name,
+          color: color,
+        });
+      });
+    });
+    return { source: 'calendar', events: events };
   }
 
   const icalUrl = props.getProperty('ICAL_URL');

@@ -8,7 +8,7 @@
  *  - Fremde Origins (Apps Script, Google) werden nicht angefasst – die App
  *    speichert ihre Daten selbst in localStorage (offline-first).
  */
-const VERSION = 'v1.1.1';
+const VERSION = 'v1.2.0';
 const CACHE = `familienzentrale-${VERSION}`;
 // Google Fonts (Bitter, Source Sans 3) bleiben versionsunabhängig im Cache → auch offline schön
 const FONT_CACHE = 'familienzentrale-fonts';

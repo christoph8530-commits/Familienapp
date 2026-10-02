@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { getSettings } from './config.js';
 import { createMockEvents } from './mock-data.js';
+import { store } from './store.js';
 
 /**
  * Kalender (read-only).
@@ -41,9 +42,16 @@ export async function getEvents(from, to, { force = false } = {}) {
   }
 }
 
+const safeHost = url => { try { return new URL(url).hostname; } catch { return ''; } };
+
 async function fetchEvents(from, to) {
   const { icalUrl } = getSettings();
-  if (icalUrl) {
+  // Google-Feeds senden keinen CORS-Header → direkt im Browser nicht ladbar, nur über Apps Script.
+  const isGoogleFeed = /(^|\.)calendar\.google\.com$/i.test(safeHost(icalUrl));
+  if (icalUrl && isGoogleFeed && !api.isConfigured()) {
+    throw new Error('Google-Kalender-Adressen lassen sich nicht direkt laden. Bitte im Apps Script als Script-Property CALENDAR_ID (oder ICAL_URL) eintragen und das Feld „iCal-URL“ in der App leeren.');
+  }
+  if (icalUrl && !isGoogleFeed) {
     const res = await fetch(icalUrl);
     if (!res.ok) throw new Error(`iCal-Feed: HTTP ${res.status}`);
     return { events: parseICS(await res.text(), from, to), source: 'ical' };
@@ -53,7 +61,9 @@ async function fetchEvents(from, to) {
     const events = Array.isArray(res.events) ? res.events : parseICS(res.ics || '', from, to);
     return { events, source: 'google' };
   }
-  return { events: createMockEvents(), source: 'demo' };
+  // Demo-Termine nur, solange auch Demo-Daten geladen sind
+  if (store.hasDemo) return { events: createMockEvents(), source: 'demo' };
+  return { events: [], source: 'none' };
 }
 
 /* ---------------------------------------------------------------------------

@@ -144,7 +144,23 @@ function renderHome() {
   const events = eventsBetween(startOfDay(now), addDays(startOfDay(now), 1));
   const trip = nextTrip();
 
+  const connected = api.isConfigured();
+  const setupCard = !connected ? `
+    <section class="card setup-card">
+      <div class="card-head">${icon('link')}<h2>${store.hasDemo ? 'Ihr seht Demo-Daten' : 'Willkommen!'}</h2></div>
+      <p class="small">${store.hasDemo
+        ? 'Alles hier sind Beispiele. Verbindet die App mit eurem Google Sheet, dann verschwinden sie und eure echten Daten und Termine erscheinen.'
+        : 'Verbindet die App mit eurem Google Sheet, damit Einkaufsliste, Termine & Co. auf allen Handys gleich sind.'}</p>
+      <div class="row wrap">
+        <button class="btn btn-primary btn-sm" data-action="settings">Jetzt verbinden</button>
+        ${store.hasDemo
+          ? '<button class="btn btn-ghost btn-sm" data-action="data-clear-demo">Demo-Daten entfernen</button>'
+          : '<button class="btn btn-ghost btn-sm" data-action="data-demo">Demo ansehen</button>'}
+      </div>
+    </section>` : '';
+
   return `
+    ${setupCard}
     <section class="hero">
       <p class="eyebrow">${greet}</p>
       <h2 class="display">${esc(fmtDayLong(now))}</h2>
@@ -326,9 +342,13 @@ async function ensureCalendar(force = false) {
   const req = (ensureCalendar.req = (ensureCalendar.req || 0) + 1);
   const res = await getEvents(from, addDays(from, 7), { force });
   if (req !== ensureCalendar.req) return;
-  state.cal = { ...res, loading: false };
+  // Mehrere Kalender? Dann zeigen wir den Kalendernamen am Termin an.
+  const multi = new Set((res.events || []).map(e => e.calendar).filter(Boolean)).size > 1;
+  state.cal = { ...res, multi, loading: false };
   if (state.view === 'kalender' || state.view === 'home') refresh();
 }
+
+const isHexColor = c => /^#[0-9a-f]{6}$/i.test(String(c || ''));
 
 function eventsBetween(from, to) {
   return (state.cal.events || [])
@@ -342,11 +362,12 @@ function eventsBetween(from, to) {
 
 function eventRow(e) {
   return `
-    <div class="event ${e.allDay ? 'allday' : ''}">
+    <div class="event ${e.allDay ? 'allday' : ''}" ${isHexColor(e.color) ? `style="--cal: ${e.color}"` : ''}>
       <div class="time">${e.allDay ? 'Ganztags' : `${fmtTime(e.start)}<br><span>${fmtTime(e.end || e.start)}</span>`}</div>
       <div class="item-main">
         <div class="event-title">${esc(e.title)}</div>
         ${e.location ? `<div class="item-sub">${icon('pin', 'icon-xs')} ${esc(e.location)}</div>` : ''}
+        ${state.cal.multi && e.calendar ? `<div class="item-sub event-cal">${esc(e.calendar)}</div>` : ''}
       </div>
     </div>`;
 }
@@ -359,7 +380,10 @@ function renderCalendar() {
   const label = mode === 'week'
     ? `${fmt(from, { day: 'numeric', month: 'short' })} – ${fmt(addDays(from, 6), { day: 'numeric', month: 'short', year: 'numeric' })}`
     : fmtDayLong(d);
-  const sourceLabel = { demo: 'Demo-Daten', google: 'Google Kalender', ical: 'iCal-Feed', none: 'Keine Quelle' }[state.cal.source] || 'Lädt …';
+  const sourceLabel = { demo: 'Demo-Termine', google: 'Google Kalender', ical: 'iCal-Feed', none: 'Nicht verbunden' }[state.cal.source] || 'Lädt …';
+  const notConnected = state.cal.source === 'none' && !state.cal.error ? `
+    <div class="banner small"><span class="item-main">Noch kein Kalender verbunden. Web-App-URL in den Einstellungen eintragen und im Apps Script die Property <code>CALENDAR_ID</code> setzen.</span>
+      <button class="btn btn-primary btn-sm" data-action="settings">Einstellungen</button></div>` : '';
 
   const dayBlock = date => {
     const evs = eventsBetween(date, addDays(date, 1));
@@ -392,6 +416,7 @@ function renderCalendar() {
       <button class="icon-btn" data-action="cal-refresh" aria-label="Aktualisieren">${icon('refresh', 'icon-sm')}</button>
     </div>
     ${state.cal.error ? `<div class="banner warn small">${esc(state.cal.error)}</div>` : ''}
+    ${notConnected}
     ${Array.from({ length: days }, (_, i) => dayBlock(addDays(from, i))).join('')}
     <p class="small muted center">Termine werden in Google Kalender gepflegt – hier nur Lesezugriff.</p>`;
 }
@@ -794,12 +819,12 @@ function openSettings() {
     body: `
       <h3 class="sheet-section">Google Sheets (Apps Script)</h3>
       ${field({ name: 'apiUrl', label: 'Web-App-URL', type: 'url', value: s.apiUrl, placeholder: 'https://script.google.com/macros/s/…/exec', hint: 'Leer = Demo-/Offline-Modus, Daten nur auf diesem Gerät. Script mit einem privaten Familienkonto bereitstellen.' })}
-      ${field({ name: 'apiToken', label: 'Familien-Token', value: s.apiToken, hint: 'Muss der Script-Property API_TOKEN entsprechen.' })}
+      ${field({ name: 'apiToken', label: 'Zugangs-Token (API_TOKEN)', value: s.apiToken, hint: 'Steht nach setup() im Ausführungsprotokoll, oder im Apps Script unter Projekteinstellungen → Script-Properties → API_TOKEN.' })}
       <div class="row wrap"><button type="button" class="btn btn-soft btn-sm" data-action="settings-test">Verbindung testen</button>
         <span class="small muted" id="settingsStatus">${store.lastSync ? `Letzter Sync: ${esc(relativeDay(store.lastSync))}` : 'Noch nie synchronisiert'}</span></div>
 
       <h3 class="sheet-section">Kalender</h3>
-      ${field({ name: 'icalUrl', label: 'iCal-URL (optional, direkt)', type: 'url', value: s.icalUrl, placeholder: 'https://…/basic.ics', hint: 'Nur für Feeds mit CORS-Freigabe. Google-Kalender am besten über Apps Script einbinden (CALENDAR_ID).' })}
+      ${field({ name: 'icalUrl', label: 'iCal-URL (Sonderfall – meist leer lassen)', type: 'url', value: s.icalUrl, placeholder: 'leer lassen', hint: 'Google-Kalender NICHT hier eintragen – die kommen über das Apps Script (Script-Property CALENDAR_ID). Nur für fremde iCal-Feeds mit CORS-Freigabe.' })}
 
       <h3 class="sheet-section">Benachrichtigungen</h3>
       <div class="row wrap"><span class="small">Status: <b>${permLabel}</b></span><span class="spacer"></span>
@@ -808,7 +833,9 @@ function openSettings() {
 
       <h3 class="sheet-section">Daten</h3>
       <div class="row wrap">
-        <button type="button" class="btn btn-soft btn-sm" data-action="data-demo">Demo-Daten laden</button>
+        ${store.hasDemo
+          ? '<button type="button" class="btn btn-soft btn-sm" data-action="data-clear-demo">Demo-Daten entfernen</button>'
+          : !api.isConfigured() ? '<button type="button" class="btn btn-soft btn-sm" data-action="data-demo">Demo-Daten laden</button>' : ''}
         <button type="button" class="btn btn-danger btn-sm" data-action="data-reset">Lokale Daten zurücksetzen</button></div>
       <p class="small muted">${esc(CONFIG.APP_NAME)} v${CONFIG.VERSION} · offline-fähig · ${store.outbox.length} ungesendete Änderung(en)</p>`,
     footer: `<span class="spacer"></span>
@@ -819,12 +846,14 @@ function openSettings() {
         e.preventDefault();
         if (!form.reportValidity()) return;
         saveSettings({ apiUrl: form.apiUrl.value.trim(), apiToken: form.apiToken.value.trim(), icalUrl: form.icalUrl.value.trim() });
+        // Beim Verbinden fliegen die Beispieldaten raus – im Sheet stehen nur echte Daten.
+        const removed = api.isConfigured() && store.hasDemo ? store.clearDemo(true) : 0;
         clearCalendarCache();
         dlg.close();
         store.setStatus(api.isConfigured() ? 'idle' : 'local');
         store.sync();
         ensureCalendar(true);
-        toast('Einstellungen gespeichert');
+        toast(removed ? 'Verbunden – Demo-Daten entfernt' : 'Einstellungen gespeichert');
       });
     },
   });
@@ -907,13 +936,21 @@ const actions = {
     }
   },
   'data-demo': () => {
-    if (!confirm('Demo-Daten laden? Lokale Einträge werden durch Beispieldaten ersetzt (bei verbundenem Sheet zusätzlich hochgeladen).')) return;
+    if (api.isConfigured()) return; // nie Beispieldaten ins echte Sheet schreiben
+    if (!confirm('Demo-Daten laden? Lokale Einträge werden durch Beispieldaten ersetzt.')) return;
     store.seed();
-    if (api.isConfigured()) store.queueAll();
     clearCalendarCache();
     ensureCalendar(true);
-    $('#formDialog').close();
+    if ($('#formDialog').open) $('#formDialog').close();
     toast('Demo-Daten geladen');
+  },
+  'data-clear-demo': () => {
+    // Verbunden: Demo-Einträge stammen dann aus dem Sheet → Löschung dorthin übertragen
+    const n = store.clearDemo(!api.isConfigured());
+    clearCalendarCache();
+    ensureCalendar(true);
+    if ($('#formDialog').open) $('#formDialog').close();
+    toast(`${n} Demo-Einträge entfernt`);
   },
   'data-reset': () => {
     if (!confirm('Alle lokal gespeicherten Daten löschen? (Einstellungen bleiben erhalten, Daten im Google Sheet bleiben unberührt.)')) return;

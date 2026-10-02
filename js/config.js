@@ -8,7 +8,7 @@
  * Familien-Google-Konto anlegen – nicht mit einem Firmen-/Agenturkonto.
  */
 export const CONFIG = {
-  VERSION: '1.1.1',
+  VERSION: '1.2.0',
   APP_NAME: 'Familienzentrale',
 
   // URL der Google-Apps-Script-Web-App (Bereitstellen → Web-App → endet auf /exec).

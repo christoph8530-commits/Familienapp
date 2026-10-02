@@ -54,7 +54,7 @@ oder
 python -m http.server 5173
 ```
 
-Dann `http://localhost:5173` öffnen. Ohne konfigurierte API läuft die App im **Demo-Modus** mit Beispieldaten.
+Dann `http://localhost:5173` öffnen. Die App startet leer und zeigt eine Karte „Willkommen – jetzt verbinden“. Unter *Einstellungen → Demo-Daten laden* lassen sich Beispieldaten anzeigen (nur solange die App nicht verbunden ist). Beim Verbinden werden sie automatisch entfernt und nicht ins Sheet geschrieben.
 
 ## Deployment auf GitHub Pages
 
@@ -82,7 +82,6 @@ Dann `http://localhost:5173` öffnen. Ohne konfigurierte API läuft die App im *
    - Ausführen als: **Ich**
    - Zugriff: **Jeder**
 6. Die `/exec`-URL kopieren und in der App unter **Einstellungen (Regler-Symbol) → Web-App-URL** eintragen, dazu das Token. „Verbindung testen“ → „Speichern“.
-7. Optional: *Einstellungen → Demo-Daten laden*, um die Beispieldaten ins Sheet zu übertragen.
 
 Nach Code-Änderungen am Script: *Bereitstellen → Bereitstellungen verwalten → Bearbeiten → Neue Version*. Die URL bleibt dabei gleich.
 
@@ -121,14 +120,14 @@ Jede Anfrage enthält `token`. Collections: `shopping`, `meals`, `topics`, `cont
 
 ## Kalender einbinden
 
-**Variante A – empfohlen (CalendarApp):** Den Familienkalender für das Konto freigeben, unter dem das Script läuft. Dann im Apps Script unter *Projekteinstellungen → Script-Properties* `CALENDAR_ID` setzen (Google Kalender → Einstellungen des Kalenders → „Kalender-ID“). Wiederholungen löst Google selbst auf.
+**Variante A – empfohlen (CalendarApp):** Den Familienkalender für das Konto freigeben, unter dem das Script läuft. Dann im Apps Script unter *Projekteinstellungen → Script-Properties* `CALENDAR_ID` setzen (Google Kalender → Einstellungen des Kalenders → „Kalender-ID“). Mehrere Kalender kommagetrennt eintragen, z. B. `abc123@group.calendar.google.com, ich@gmail.com`. Jeder erscheint in seiner Google-Farbe, mit Kalendername am Termin. Wiederholungen löst Google selbst auf.
 Mit einer Google-Familiengruppe (Google One) gibt es bereits den gemeinsamen Kalender **„Familie“**. Läuft das Script unter einem Konto der Gruppe, genügt dessen Kalender-ID, eine Freigabe ist nicht nötig.
 
 **Variante B – iCal-Proxy:** Script-Property `ICAL_URL` auf die „Privatadresse im iCal-Format“ setzen. Das Script lädt den Feed serverseitig, denn Google-Feeds senden keinen CORS-Header. Die App parst ihn dann.
 
-**Variante C – direkt:** Ein iCal-Feed *mit* CORS-Header kann in den App-Einstellungen als „iCal-URL“ eingetragen werden.
+**Variante C – direkt:** Ein iCal-Feed *mit* CORS-Header kann in den App-Einstellungen als „iCal-URL“ eingetragen werden. **Google-Kalender-Adressen funktionieren dort nicht** (kein CORS) – dafür Variante A oder B nutzen und das Feld in der App leer lassen.
 
-Ohne Konfiguration zeigt die App Demo-Termine der aktuellen Woche.
+Ohne Verbindung zeigt der Kalender den Hinweis „Noch kein Kalender verbunden“ (Demo-Termine nur, wenn Demo-Daten geladen sind).
 
 ## Erinnerungen – Möglichkeiten und Grenzen
 

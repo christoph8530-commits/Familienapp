@@ -22,6 +22,8 @@ const read = (key, fallback) => {
 };
 const write = (key, value) => localStorage.setItem(P + key, JSON.stringify(value));
 
+const isDemoId = id => String(id).startsWith('demo-');
+
 export const uid = () =>
   crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -35,14 +37,51 @@ class Store extends EventTarget {
   init() {
     if (read('seeded', false)) {
       ALL.forEach(c => { this.data[c] = read('col:' + c, []); });
-    } else if (api.isConfigured()) {
-      // Mit Backend: nichts vorbefüllen, der erste Sync holt die Daten aus dem Sheet.
+    } else {
+      // Leerer Start – Demo-Daten gibt es nur auf Wunsch (Einstellungen → Demo-Daten laden).
       ALL.forEach(c => { this.data[c] = []; this.persist(c); });
       write('seeded', true);
-    } else {
-      this.seed();
+    }
+    // Mit Backend: Demo-Erinnerungen entfernen – sie sind nur lokal, der Sync würde sie nie ersetzen.
+    if (api.isConfigured()) {
+      LOCAL_ONLY.forEach(c => {
+        if (this.data[c].some(i => isDemoId(i.id))) {
+          this.data[c] = this.data[c].filter(i => !isDemoId(i.id));
+          this.persist(c);
+        }
+      });
     }
     this.status = api.isConfigured() ? 'idle' : 'local';
+  }
+
+  /** Sind (noch) Demo-Einträge vorhanden? */
+  get hasDemo() {
+    return ALL.some(c => this.all(c).some(i => isDemoId(i.id)));
+  }
+
+  /**
+   * Entfernt alle Demo-Einträge.
+   * localOnly = true: nur auf dem Gerät löschen, ohne Lösch-Markierungen ins Sheet zu schreiben
+   * (beim Verbinden – die Demo-Daten waren nie im Sheet).
+   * localOnly = false: Löschung auch ins Sheet übertragen (falls Demo-Daten dort gelandet sind).
+   */
+  clearDemo(localOnly = false) {
+    let n = 0;
+    ALL.forEach(c => {
+      const ids = this.all(c).filter(i => isDemoId(i.id)).map(i => i.id);
+      if (!ids.length) return;
+      n += ids.length;
+      if (localOnly) {
+        this.data[c] = this.data[c].filter(i => !isDemoId(i.id));
+        this.outbox = this.outbox.filter(o => !(o.collection === c && isDemoId(o.item.id)));
+        write('outbox', this.outbox);
+        this.persist(c);
+        this.emit(c);
+      } else {
+        this.removeMany(c, ids);
+      }
+    });
+    return n;
   }
 
   /** Lädt die Demo-Daten (ersetzt lokale Daten). */
@@ -50,12 +89,6 @@ class Store extends EventTarget {
     const mock = createMockData();
     ALL.forEach(c => { this.data[c] = mock[c] || []; this.persist(c); this.emit(c); });
     write('seeded', true);
-  }
-
-  /** Schiebt alle lokalen Einträge in die Outbox (z. B. Demo-Daten ins Sheet hochladen). */
-  queueAll() {
-    SYNCED.forEach(c => this.enqueue(c, this.data[c] || []));
-    this.scheduleSync(0);
   }
 
   reset() {

@@ -123,7 +123,9 @@ Jede Anfrage enthält `token`. Collections: `shopping`, `meals`, `topics`, `cont
 **Variante A – empfohlen (CalendarApp):** Den Familienkalender für das Konto freigeben, unter dem das Script läuft. Dann im Apps Script unter *Projekteinstellungen → Script-Properties* `CALENDAR_ID` setzen (Google Kalender → Einstellungen des Kalenders → „Kalender-ID“). Mehrere Kalender kommagetrennt eintragen, z. B. `abc123@group.calendar.google.com, ich@gmail.com`. Jeder erscheint in seiner Google-Farbe, mit Kalendername am Termin. Wiederholungen löst Google selbst auf.
 Mit einer Google-Familiengruppe (Google One) gibt es bereits den gemeinsamen Kalender **„Familie“**. Läuft das Script unter einem Konto der Gruppe, genügt dessen Kalender-ID, eine Freigabe ist nicht nötig.
 
-**Variante B – iCal-Proxy:** Script-Property `ICAL_URL` auf die „Privatadresse im iCal-Format“ setzen. Das Script lädt den Feed serverseitig, denn Google-Feeds senden keinen CORS-Header. Die App parst ihn dann.
+**Variante B – iCal-Proxy:** Script-Property `ICAL_URL` auf einen iCal-Feed setzen. Das Script lädt ihn serverseitig, die App parst ihn dann. Steht dort (oder in `CALENDAR_ID`) eine **Google-Kalender-Adresse**, liest das Script die Kalender-ID daraus und nutzt automatisch Variante A. Das funktioniert dann auch für nicht öffentliche Kalender.
+
+**Fehlersuche:** Meldet die App „Kein Kalender konfiguriert“, nennt die Fehlermeldung alle Script-Properties, die das Script sieht. Groß-/Kleinschreibung und Leerzeichen im Property-Namen spielen keine Rolle.
 
 **Variante C – direkt:** Ein iCal-Feed *mit* CORS-Header kann in den App-Einstellungen als „iCal-URL“ eingetragen werden. **Google-Kalender-Adressen funktionieren dort nicht** (kein CORS) – dafür Variante A oder B nutzen und das Feld in der App leer lassen.
 

@@ -70,7 +70,7 @@ function handle_(req) {
 /* ---------- Sicherheit ---------- */
 
 function authorize_(token) {
-  const expected = PropertiesService.getScriptProperties().getProperty('API_TOKEN');
+  const expected = prop_('API_TOKEN');
   // Ohne Token bleibt die API zu – die Web-App ist öffentlich erreichbar.
   if (!expected) throw new Error('API_TOKEN fehlt – bitte setup() im Script-Editor ausführen');
   if (token !== expected) throw new Error('Nicht autorisiert (Token prüfen)');
@@ -156,13 +156,19 @@ function upsertMany_(name, items) {
 /* ---------- Kalender ---------- */
 
 function calendar_(from, to) {
-  const props = PropertiesService.getScriptProperties();
   const start = from ? new Date(from) : new Date();
   const end = to ? new Date(to) : new Date(start.getTime() + 30 * 864e5);
 
-  // Eine oder mehrere Kalender-IDs, kommagetrennt: "familie@group.calendar.google.com, ich@gmail.com"
-  const calendarIds = String(props.getProperty('CALENDAR_ID') || '')
-    .split(',').map(function (s) { return s.trim(); }).filter(String);
+  // Eine oder mehrere Kalender-IDs, kommagetrennt: "familie@group.calendar.google.com, ich@gmail.com".
+  // Statt der ID darf auch eine Google-Kalender-Adresse (iCal/Einbetten) eingetragen sein – die ID wird herausgelesen.
+  let calendarIds = String(prop_('CALENDAR_ID') || '')
+    .split(',').map(function (v) { return calendarIdFromUrl_(v.trim()) || v.trim(); }).filter(String);
+
+  // ICAL_URL mit Google-Adresse → ebenfalls direkt über CalendarApp lesen (funktioniert auch für
+  // nicht öffentliche Kalender, solange dieses Konto sie sehen kann)
+  const icalUrl = String(prop_('ICAL_URL') || '').trim();
+  if (!calendarIds.length && calendarIdFromUrl_(icalUrl)) calendarIds = [calendarIdFromUrl_(icalUrl)];
+
   if (calendarIds.length) {
     const seen = {};
     const events = [];
@@ -191,9 +197,8 @@ function calendar_(from, to) {
     return { source: 'calendar', events: events };
   }
 
-  const icalUrl = props.getProperty('ICAL_URL');
   if (icalUrl) {
-    // Proxy: Google-iCal-Feeds haben keinen CORS-Header, daher Abruf serverseitig.
+    // Proxy für fremde iCal-Feeds (kein CORS im Browser), Abruf serverseitig.
     const cache = CacheService.getScriptCache();
     let ics = cache.get('ics');
     if (!ics) {
@@ -203,7 +208,25 @@ function calendar_(from, to) {
     return { source: 'ical', ics: ics };
   }
 
-  throw new Error('Kein Kalender konfiguriert (Script-Property CALENDAR_ID oder ICAL_URL setzen).');
+  const names = Object.keys(PropertiesService.getScriptProperties().getProperties());
+  throw new Error('Kein Kalender konfiguriert. Script-Property CALENDAR_ID setzen. Vorhandene Properties: ' +
+    (names.length ? names.map(function (n) { return '„' + n + '“'; }).join(', ') : 'keine'));
+}
+
+/** Liest die Kalender-ID aus einer Google-Kalender-Adresse (iCal- oder Einbetten-Link). */
+function calendarIdFromUrl_(value) {
+  const v = String(value || '');
+  if (!/calendar\.google\.com/i.test(v)) return '';
+  const m = v.match(/\/calendar\/ical\/([^/]+)\//) || v.match(/[?&]src=([^&]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+/** Script-Property lesen – tolerant gegenüber Groß-/Kleinschreibung und Leerzeichen im Namen. */
+function prop_(name) {
+  const props = PropertiesService.getScriptProperties().getProperties();
+  if (props[name] !== undefined) return String(props[name]).trim();
+  const key = Object.keys(props).filter(function (k) { return k.trim().toUpperCase() === name; })[0];
+  return key ? String(props[key]).trim() : '';
 }
 
 /* ---------- Hilfsfunktionen ---------- */

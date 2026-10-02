@@ -1,0 +1,13 @@
+# Lokale Werkzeug-Einstellungen
+.claude/
+.vscode/
+.idea/
+
+# Betriebssystem
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Lokale Notizen / Geheimnisse – nie committen
+*.local.*
+.env*
